@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>DevOps Batch 20 Notes App</title>
+    <title>DevOps Notes App</title>
     <style>
         body {
             font-family: "Segoe UI", Arial, sans-serif;
