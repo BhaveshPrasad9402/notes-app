@@ -1,12 +1,10 @@
 pipeline {
-
     agent any
 
     environment {
-        DOCKER_IMAGE = "satyamsri/notes-app"
-        SONAR_SCANNER = tool 'sonar-scanner'
-        AWS_REGION = "ap-south-1"
-        CLUSTER_NAME = "notes-eks-cluster"
+        IMAGE_NAME = 'notes-app:latest'
+        CONTAINER_NAME = 'notes-app-container'
+        PORT = '9092'
     }
 
     stages {
@@ -14,107 +12,67 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'master',
-                    url: 'https://github.com/Satyams-git/notes-app.git'
+                    url: 'https://github.com/BhaveshPrasad9402/notes-app.git'
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    echo "Building Docker Image..."
-                    docker build -t ${DOCKER_IMAGE}:latest .
-                """
+                sh '''
+                    echo "==== Building Docker Image ===="
+                    docker build -t $IMAGE_NAME .
+                '''
             }
         }
-
-        stage('Trivy Scan') {
-            steps {
-                sh """
-                    echo "Running Trivy Vulnerability Scan..."
-                    trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKER_IMAGE}:latest
-                """
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonarqube') {
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                            echo "Running SonarScanner..."
-                            ${SONAR_SCANNER}/bin/sonar-scanner \
-                              -Dsonar.projectKey=notes-app \
-                              -Dsonar.sources=. \
-                              -Dsonar.host.url=$SONAR_HOST_URL \
-                              -Dsonar.token=$SONAR_TOKEN
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Wait for Sonar Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: false   // 🔥 ALLOW PIPELINE TO CONTINUE
-                }
-            }
-        }
-
         stage('Docker Login & Push') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
+                    credentialsId: 'Docker_Hub_id_pwd',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
+                        echo "===Log in to Docker Hub==="
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-
-                        docker tag satyamsri/notes-app:latest satyamsri/notes-app:${BUILD_NUMBER}
-
-                        docker push satyamsri/notes-app:${BUILD_NUMBER}
-                        docker push satyamsri/notes-app:latest
+                        echo "===Tagging Image==="
+                        docker tag $IMAGE_NAME $DOCKER_USER/$IMAGE_NAME
+                        echo "===Passing Image to DockerHub ===="
+                        docker push $DOCKER_USER/$IMAGE_NAME
+                    
                     '''
                 }
             }
         }
 
-        stage('Deploy to EKS') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'aws-creds',
-                    usernameVariable: 'AWS_ACCESS_KEY_ID',
-                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                )]) {
-                    sh '''
-                        echo "Configuring AWS CLI..."
-                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-                        aws configure set default.region ap-south-1
-
-                        echo "Updating kubeconfig..."
-                        aws eks update-kubeconfig --name notes-eks-cluster --region ap-south-1
-
-                        echo "Applying Kubernetes manifests..."
-                        kubectl apply -f k8s/
-
-                        echo "Updating deployment image..."
-                        kubectl set image deployment/notes-app notes-app=satyamsri/notes-app:${BUILD_NUMBER} -n default
-
-                        echo "Waiting for rollout..."
-                        kubectl rollout status deployment/notes-app -n default
-                    '''
-                }
-            }
-        }
-
-        stage('Verify Deployment') {
+        stage('Stop Old Container') {
             steps {
                 sh '''
-                    echo "Verifying Kubernetes Resources..."
-                    kubectl get pods -o wide -n default
-                    kubectl get svc -o wide -n default
+                    echo "==== Stopping old container ===="
+                    docker stop $CONTAINER_NAME || true
+                    docker rm $CONTAINER_NAME || true
+                '''
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                sh '''
+                    echo "==== Running new container ===="
+                    docker run -d \
+                      --name $CONTAINER_NAME \
+                      -p $PORT:80 \
+                      -v notes-data:/data \
+                      $IMAGE_NAME
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    echo "==== Checking app response ===="
+                    sleep 5
+                    curl -s http://13.61.151.82:$PORT | head -n 20
                 '''
             }
         }
@@ -122,10 +80,10 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully"
+            echo "✅ Notes app deployed successfully"
         }
         failure {
-            echo "Pipeline failed"
+            echo "❌ Notes app deployment failed"
         }
     }
 }
