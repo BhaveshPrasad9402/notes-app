@@ -2,9 +2,10 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'notes-app:latest'
+        IMAGE_NAME     = 'notes-app'
+        IMAGE_TAG      = 'latest'
         CONTAINER_NAME = 'notes-app-container'
-        PORT = '9092'
+        PORT           = '9092'
     }
 
     stages {
@@ -20,10 +21,11 @@ pipeline {
             steps {
                 sh '''
                     echo "==== Building Docker Image ===="
-                    docker build -t $IMAGE_NAME .
+                    docker build -t $IMAGE_NAME:$IMAGE_TAG .
                 '''
             }
         }
+
         stage('Docker Login & Push') {
             steps {
                 withCredentials([usernamePassword(
@@ -32,13 +34,14 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
-                        echo "===Log in to Docker Hub==="
+                        echo "==== Docker Login ===="
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        echo "===Tagging Image==="
-                        docker tag $IMAGE_NAME $DOCKER_USER/$IMAGE_NAME
-                        echo "===Passing Image to DockerHub ===="
-                        docker push $DOCKER_USER/$IMAGE_NAME
-                    
+
+                        echo "==== Tagging Image ===="
+                        docker tag $IMAGE_NAME:$IMAGE_TAG $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
+
+                        echo "==== Pushing Image to Docker Hub ===="
+                        docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
                     '''
                 }
             }
@@ -62,7 +65,7 @@ pipeline {
                       --name $CONTAINER_NAME \
                       -p $PORT:80 \
                       -v notes-data:/data \
-                      $IMAGE_NAME
+                      $IMAGE_NAME:$IMAGE_TAG
                 '''
             }
         }
@@ -72,7 +75,7 @@ pipeline {
                 sh '''
                     echo "==== Checking app response ===="
                     sleep 5
-                    curl -s http://13.61.151.82:$PORT | head -n 20
+                    curl -s http://localhost:$PORT | head -n 20
                 '''
             }
         }
@@ -81,9 +84,20 @@ pipeline {
     post {
         success {
             echo "✅ Notes app deployed successfully"
+            emailext(
+                subject: "Build Successful",
+                body: "Congratulations! Build and deployment completed successfully.",
+                to: "bhaveshprasad09@gmail.com"
+            )
         }
+
         failure {
             echo "❌ Notes app deployment failed"
+            emailext(
+                subject: "Build Failed",
+                body: "Oops! Build failed. Please check Jenkins logs.",
+                to: "bhaveshprasad09@gmail.com"
+            )
         }
     }
 }
